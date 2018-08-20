@@ -1,0 +1,81 @@
+EventBuffer:
+
+    handletype Event = {
+        queryId : Long,
+        subqueryID : Long,
+        fragmentId : Int,
+        opId : Int,
+        startTime : Long,
+        endTime : Long,
+        numTuples : Long
+    }
+
+    state events : List<Event>
+
+    invariant all [x.val.startTime <= x.val.endTime | x <- events];
+
+    op add(e : Event)
+        assume e.val.startTime <= e.val.endTime;
+        events.add(e);
+
+    op rm(e : Event)
+        assume (e in events);
+        events.remove(e);
+
+    op updateOpId(e : Event, id : Int)
+        assume (e in events);
+        assume e.val.opId != id;
+        e.val.opId = id;
+
+    op updateStartTime(e : Event, time : Long)
+        assume (e in events);
+        assume e.val.startTime != time;
+        assume time <= e.val.endTime;
+        e.val.startTime = time;
+
+    op updateEndTime(e : Event, time : Long)
+        assume (e in events);
+        assume e.val.endTime != time;
+        assume e.val.startTime <= time;
+        e.val.endTime = time;
+
+    op updateNumTuples(e : Event, num : Long)
+        assume (e in events);
+        assume e.val.numTuples != num;
+        e.val.numTuples = num;
+
+//    op update(
+//        e : Event,
+//        q_id : Long,
+//        sq_id : Long,
+//        frag_id : Int,
+//        op_id : Int,
+//        start : Long,
+//        end : Long,
+//        num : Long)
+//
+//        assume start <= end;
+//        assume (e in events);
+//
+//        e.val.queryId = q_id;
+//        e.val.subqueryID = sq_id;
+//        e.val.fragmentId = frag_id;
+//        e.val.opId = op_id;
+//        e.val.startTime = start;
+//        e.val.endTime = end;
+//        e.val.numTuples = num;
+
+    query getAnalyticsInTimespan(
+            q_id : Long,
+            sq_id : Long,
+            frag_id : Int,
+            start : Long,
+            end : Long)
+        assume start <= end;
+
+        [e | e <- events, (
+            e.val.queryId == q_id and
+            e.val.subqueryID == sq_id and
+            e.val.fragmentId == frag_id and
+            e.val.startTime < end and
+            e.val.endTime >= start)]
