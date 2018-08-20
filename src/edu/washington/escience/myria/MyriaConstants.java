@@ -242,14 +242,14 @@ public final class MyriaConstants {
   /**
    * The relation that stores profiling information about which operators executed when.
    */
-  public static final RelationKey EVENT_PROFILING_RELATION = new RelationKey("public", "logs", "Profiling");
+//  public static final RelationKey EVENT_PROFILING_RELATION = new RelationKey("public", "logs", "Profiling");
 
   /**
    * The schema of the {@link #EVENT_PROFILING_RELATION}.
    */
-  public static final Schema EVENT_PROFILING_SCHEMA = Schema.ofFields("queryId", Type.LONG_TYPE, "subQueryId",
-      Type.INT_TYPE, "fragmentId", Type.INT_TYPE, "opId", Type.INT_TYPE, "startTime", Type.LONG_TYPE, "endTime",
-      Type.LONG_TYPE, "numTuples", Type.LONG_TYPE);
+//  public static final Schema EVENT_PROFILING_SCHEMA = Schema.ofFields("queryId", Type.LONG_TYPE, "subQueryId",
+//      Type.INT_TYPE, "fragmentId", Type.INT_TYPE, "opId", Type.INT_TYPE, "startTime", Type.LONG_TYPE, "endTime",
+//      Type.LONG_TYPE, "numTuples", Type.LONG_TYPE);
 
   /**
    * The relation that stores profiling information about sent tuples.
