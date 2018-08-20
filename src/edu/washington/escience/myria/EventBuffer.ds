@@ -1,6 +1,7 @@
 {{
-package edu.washington.escience.myria  
+package edu.washington.escience.myria;
 }}
+
 EventBuffer:
 
     handletype Event = {
