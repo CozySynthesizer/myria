@@ -25,7 +25,7 @@ public class EventBufferScan extends LeafOperator {
   private final long subqueryId;
   private final long start;
   private final long end;
-  private Iterator<EventBuffer.Event> it = null;
+  private ArrayList<EventBuffer.Event> events = null;
 
   public EventBufferScan(long queryId, int fragmentId, long subqueryId, long start, long end) {
     this.queryId = queryId;
@@ -37,20 +37,23 @@ public class EventBufferScan extends LeafOperator {
 
   @Override
   protected TupleBatch fetchNextReady() throws Exception {
-    if (it == null) {
+    if (events == null) {
       // TODO: locking? This structure is not threadsafe...
-      it = ProfilingLogger.events.getAnalyticsInTimespan(queryId, subqueryId, fragmentId, start, end);
+      events = ProfilingLogger.events.getAnalyticsInTimespan(queryId, subqueryId, fragmentId, start, end);
+
     }
 
     int count = 0;
 
     final List<ColumnBuilder<?>> columnBuilders = ColumnFactory.allocateColumns(OUTPUT_SCHEMA);
+
+    Iterator<EventBuffer.Event> it = events.iterator();
     while (it.hasNext() && count < BATCH_SIZE) {
-      EventBuffer.Event r = it.next();
-      columnBuilders.get(0).appendInt(r.opId);
-      columnBuilders.get(1).appendLong(r.startTime);
-      columnBuilders.get(2).appendLong(r.endTime);
-      columnBuilders.get(3).appendLong(r.numTuples);
+      EventBuffer.Event e = it.next();
+      columnBuilders.get(0).appendInt(e.getOpId());
+      columnBuilders.get(1).appendLong(e.getStartTime());
+      columnBuilders.get(2).appendLong(e.getEndTime());
+      columnBuilders.get(3).appendLong(e.getNumTuples());
       ++count;
     }
 
