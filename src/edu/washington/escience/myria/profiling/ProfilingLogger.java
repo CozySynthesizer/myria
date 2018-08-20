@@ -7,6 +7,7 @@ import java.util.concurrent.TimeUnit;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 
+import edu.washington.escience.myria.EventBuffer;
 import edu.washington.escience.myria.DbException;
 import edu.washington.escience.myria.MyriaConstants;
 import edu.washington.escience.myria.RelationKey;
@@ -33,7 +34,7 @@ public class ProfilingLogger {
   private final JdbcAccessMethod accessMethod;
 
   /** Buffer for recorded events. */
-  private final TupleBatchBuffer events;
+  public static final EventBuffer events = new EventBuffer();
 
   /** Buffer for tuples sent. */
   private final TupleBatchBuffer sent;
@@ -55,17 +56,17 @@ public class ProfilingLogger {
     /* open the database connection */
     accessMethod = (JdbcAccessMethod) AccessMethod.of(connectionInfo.getDbms(), connectionInfo, false);
 
-    accessMethod.createUnloggedTableIfNotExists(MyriaConstants.EVENT_PROFILING_RELATION,
-        MyriaConstants.EVENT_PROFILING_SCHEMA);
+//    accessMethod.createUnloggedTableIfNotExists(MyriaConstants.EVENT_PROFILING_RELATION,
+//        MyriaConstants.EVENT_PROFILING_SCHEMA);
     accessMethod.createTableIfNotExists(MyriaConstants.SENT_PROFILING_RELATION, MyriaConstants.SENT_PROFILING_SCHEMA);
     accessMethod.createUnloggedTableIfNotExists(MyriaConstants.RESOURCE_PROFILING_RELATION,
         MyriaConstants.RESOURCE_PROFILING_SCHEMA);
 
-    createEventIndexes();
+//    createEventIndexes();
     createSentIndex();
     createResourceIndex();
 
-    events = new TupleBatchBuffer(MyriaConstants.EVENT_PROFILING_SCHEMA);
+ //   events = new TupleBatchBuffer(MyriaConstants.EVENT_PROFILING_SCHEMA);
     sent = new TupleBatchBuffer(MyriaConstants.SENT_PROFILING_SCHEMA);
     resources = new TupleBatchBuffer(MyriaConstants.RESOURCE_PROFILING_SCHEMA);
   }
@@ -104,24 +105,24 @@ public class ProfilingLogger {
   /**
    * @throws DbException if index cannot be created
    */
-  protected void createEventIndexes() throws DbException {
-    final Schema schema = MyriaConstants.EVENT_PROFILING_SCHEMA;
-
-    List<IndexRef> rootOpsIndex =
-        ImmutableList.of(IndexRef.of(schema, "queryId"), IndexRef.of(schema, "subQueryId"), IndexRef.of(schema,
-            "fragmentId"), IndexRef.of(schema, "startTime"), IndexRef.of(schema, "endTime"));
-    List<IndexRef> filterIndex =
-        ImmutableList.of(IndexRef.of(schema, "queryId"), IndexRef.of(schema, "subQueryId"), IndexRef.of(schema,
-            "fragmentId"), IndexRef.of(schema, "opId"), IndexRef.of(schema, "startTime"), IndexRef
-            .of(schema, "endTime"));
-
-    try {
-      accessMethod.createIndexIfNotExists(MyriaConstants.EVENT_PROFILING_RELATION, schema, rootOpsIndex);
-      accessMethod.createIndexIfNotExists(MyriaConstants.EVENT_PROFILING_RELATION, schema, filterIndex);
-    } catch (DbException e) {
-      LOGGER.error("Couldn't create index for profiling logs:", e);
-    }
-  }
+//  protected void createEventIndexes() throws DbException {
+//    final Schema schema = MyriaConstants.EVENT_PROFILING_SCHEMA;
+//
+//    List<IndexRef> rootOpsIndex =
+//        ImmutableList.of(IndexRef.of(schema, "queryId"), IndexRef.of(schema, "subQueryId"), IndexRef.of(schema,
+//            "fragmentId"), IndexRef.of(schema, "startTime"), IndexRef.of(schema, "endTime"));
+//    List<IndexRef> filterIndex =
+//        ImmutableList.of(IndexRef.of(schema, "queryId"), IndexRef.of(schema, "subQueryId"), IndexRef.of(schema,
+//            "fragmentId"), IndexRef.of(schema, "opId"), IndexRef.of(schema, "startTime"), IndexRef
+//            .of(schema, "endTime"));
+//
+//    try {
+//      accessMethod.createIndexIfNotExists(MyriaConstants.EVENT_PROFILING_RELATION, schema, rootOpsIndex);
+//      accessMethod.createIndexIfNotExists(MyriaConstants.EVENT_PROFILING_RELATION, schema, filterIndex);
+//    } catch (DbException e) {
+//      LOGGER.error("Couldn't create index for profiling logs:", e);
+//    }
+//  }
 
   /**
    * Returns the relative time to the beginning on the query in nanoseconds.
@@ -164,15 +165,26 @@ public class ProfilingLogger {
   public synchronized void recordEvent(final Operator operator, final long numTuples, final long startTime)
       throws DbException {
     SubQueryId sq = operator.getSubQueryId();
-    events.putLong(0, sq.getQueryId());
-    events.putInt(1, (int) sq.getSubqueryId());
-    events.putInt(2, operator.getFragmentId());
-    events.putInt(3, Preconditions.checkNotNull(operator.getOpId(), "opId"));
-    events.putLong(4, startTime);
-    events.putLong(5, getTime(operator));
-    events.putLong(6, numTuples);
-
-    flush(MyriaConstants.EVENT_PROFILING_RELATION, events.popFilled());
+//    events.putLong(0, sq.getQueryId());
+//    events.putInt(1, (int) sq.getSubqueryId());
+//    events.putInt(2, operator.getFragmentId());
+//    events.putInt(3, Preconditions.checkNotNull(operator.getOpId(), "opId"));
+//    events.putLong(4, startTime);
+//    events.putLong(5, getTime(operator));
+//    events.putLong(6, numTuples);
+//
+//    flush(MyriaConstants.EVENT_PROFILING_RELATION, events.popFilled());
+    EventBuffer.Event e = new EventBuffer.Event(
+            sq.getQueryId(),
+            sq.getSubqueryId(),
+            operator.getFragmentId(),
+            Preconditions.checkNotNull(operator.getOpId(), "opId"),
+            startTime,
+            getTime(operator),
+            numTuples); 
+    synchronized (events) {
+        events.add(e);
+    }
   }
 
   /**
@@ -223,11 +235,11 @@ public class ProfilingLogger {
    */
   public synchronized void flush() throws DbException {
     flush(MyriaConstants.SENT_PROFILING_RELATION, sent.popAny());
-    flush(MyriaConstants.EVENT_PROFILING_RELATION, events.popAny());
+//    flush(MyriaConstants.EVENT_PROFILING_RELATION, events.popAny());
     flush(MyriaConstants.RESOURCE_PROFILING_RELATION, resources.popAny());
 
     Preconditions.checkState(sent.numTuples() == 0, "Unwritten sent profiling data.");
-    Preconditions.checkState(events.numTuples() == 0, "Unwritten event profiling data.");
+//    Preconditions.checkState(events.numTuples() == 0, "Unwritten event profiling data.");
     Preconditions.checkState(resources.numTuples() == 0, "Unwritten resource profiling data.");
   }
 
