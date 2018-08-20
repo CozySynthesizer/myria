@@ -46,6 +46,8 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.ListenableFuture;
 
+import edu.washington.escience.myria.EventBufferScan;
+import edu.washington.escience.myria.operator.LeafOperator;
 import edu.washington.escience.myria.CsvTupleWriter;
 import edu.washington.escience.myria.DbException;
 import edu.washington.escience.myria.MyriaConstants;
@@ -821,8 +823,8 @@ public final class Server {
 
     if (getDBMS().equals(MyriaConstants.STORAGE_SYSTEM_POSTGRESQL)) {
       final Set<Integer> workerIds = workers.keySet();
-      addRelationToCatalog(MyriaConstants.EVENT_PROFILING_RELATION, MyriaConstants.EVENT_PROFILING_SCHEMA, workerIds,
-          false);
+//      addRelationToCatalog(MyriaConstants.EVENT_PROFILING_RELATION, MyriaConstants.EVENT_PROFILING_SCHEMA, workerIds,
+//          false);
       addRelationToCatalog(MyriaConstants.SENT_PROFILING_RELATION, MyriaConstants.SENT_PROFILING_SCHEMA, workerIds,
           false);
       addRelationToCatalog(MyriaConstants.RESOURCE_PROFILING_RELATION, MyriaConstants.RESOURCE_PROFILING_SCHEMA,
@@ -1498,34 +1500,43 @@ public final class Server {
       throws DbException {
     Preconditions.checkArgument(start < end, "range cannot be negative");
 
-    final Schema schema =
-        Schema.ofFields("opId", Type.INT_TYPE, "startTime", Type.LONG_TYPE, "endTime", Type.LONG_TYPE, "numTuples",
-            Type.LONG_TYPE);
+    final Schema schema = EventBufferScan.OUTPUT_SCHEMA;
+//        Schema.ofFields("opId", Type.INT_TYPE, "startTime", Type.LONG_TYPE, "endTime", Type.LONG_TYPE, "numTuples",
+//            Type.LONG_TYPE);
 
     Set<Integer> actualWorkers = getWorkersForSubQuery(subqueryId);
 
-    String opCondition = "";
+//    String opCondition = "";
     if (onlyRootOperator) {
-      opCondition =
-          Joiner.on(' ').join("AND \"opId\" = (SELECT \"opId\" FROM",
-              MyriaConstants.EVENT_PROFILING_RELATION.toString(getDBMS()), "WHERE \"fragmentId\" =", fragmentId,
-              " AND \"queryId\"=", subqueryId.getQueryId(), "AND \"subQueryId\" =", subqueryId.getSubqueryId(),
-              "ORDER BY \"startTime\" ASC LIMIT 1)");
+      throw new RuntimeException("onlyRootOperator is not supported");
+//      opCondition =
+//          Joiner.on(' ').join("AND \"opId\" = (SELECT \"opId\" FROM",
+//              MyriaConstants.EVENT_PROFILING_RELATION.toString(getDBMS()), "WHERE \"fragmentId\" =", fragmentId,
+//              " AND \"queryId\"=", subqueryId.getQueryId(), "AND \"subQueryId\" =", subqueryId.getSubqueryId(),
+//              "ORDER BY \"startTime\" ASC LIMIT 1)");
     }
 
-    String spanCondition = "";
+//    String spanCondition = "";
     if (minSpanLength > 0) {
-      spanCondition = Joiner.on(' ').join("AND \"endTime\" - \"startTime\" >", minSpanLength);
+      throw new RuntimeException("minSpanLength is not supported");
+//      spanCondition = Joiner.on(' ').join("AND \"endTime\" - \"startTime\" >", minSpanLength);
     }
 
-    String queryString =
-        Joiner.on(' ').join("SELECT \"opId\", \"startTime\", \"endTime\", \"numTuples\" FROM",
-            MyriaConstants.EVENT_PROFILING_RELATION.toString(getDBMS()), "WHERE \"fragmentId\" =", fragmentId,
-            "AND \"queryId\" =", subqueryId.getQueryId(), "AND \"subQueryId\" =", subqueryId.getSubqueryId(),
-            "AND \"endTime\" >", start, "AND \"startTime\" <", end, opCondition, spanCondition,
-            "ORDER BY \"startTime\" ASC");
-
-    DbQueryScan scan = new DbQueryScan(queryString, schema);
+//    String queryString =
+//        Joiner.on(' ').join("SELECT \"opId\", \"startTime\", \"endTime\", \"numTuples\" FROM",
+//            MyriaConstants.EVENT_PROFILING_RELATION.toString(getDBMS()), "WHERE \"fragmentId\" =", fragmentId,
+//            "AND \"queryId\" =", subqueryId.getQueryId(), "AND \"subQueryId\" =", subqueryId.getSubqueryId(),
+//            "AND \"endTime\" >", start, "AND \"startTime\" <", end, opCondition, spanCondition,
+//            "ORDER BY \"startTime\" ASC");
+//
+//    DbQueryScan scan = new DbQueryScan(queryString, schema);
+    LeafOperator scan = new EventBufferScan(
+            subqueryId.getQueryId(),
+            (int)fragmentId,
+            subqueryId.getSubqueryId(),
+            start,
+            end
+    );
 
     ImmutableList.Builder<Expression> emitExpressions = ImmutableList.builder();
 
@@ -1591,84 +1602,85 @@ public final class Server {
 
     Set<Integer> actualWorkers = getWorkersForSubQuery(subqueryId);
 
-    final Schema schema = Schema.ofFields("opId", Type.INT_TYPE, "nanoTime", Type.LONG_TYPE);
-    final RelationKey relationKey = MyriaConstants.EVENT_PROFILING_RELATION;
-
-    Map<String, Object> queryArgs = new HashMap<>();
-    queryArgs.put("QUERY", subqueryId.getQueryId());
-    queryArgs.put("SUBQUERY", subqueryId.getSubqueryId());
-    queryArgs.put("FRAGMENT", fragmentId);
-    queryArgs.put("START", start);
-    queryArgs.put("END", end);
-    queryArgs.put("STEP", step);
-    queryArgs.put("BINS", bins);
-    queryArgs.put("PROF_TABLE", relationKey.toString(getDBMS()));
-    StrSubstitutor sub;
-
-    String filterOpnameQueryString = "";
-    if (onlyRootOp) {
-      sub = new StrSubstitutor(queryArgs);
-      filterOpnameQueryString =
-          sub.replace("AND p.\"opId\"=(SELECT \"opId\" FROM ${PROF_TABLE} WHERE \"fragmentId\"=${FRAGMENT} AND \"queryId\"=${QUERY} AND \"subQueryId\"=${SUBQUERY} ORDER BY \"startTime\" ASC LIMIT 1)");
-    }
-
-    // Reinitialize the substitutor after including the opname filter.
-    queryArgs.put("OPNAME_FILTER", filterOpnameQueryString);
-    sub = new StrSubstitutor(queryArgs);
-
-    String histogramWorkerQueryString =
-        sub.replace(Joiner
-            .on("\n")
-            .join(
-                "SELECT \"opId\", ${START}::bigint+${STEP}::bigint*s.bin as \"nanoTime\"",
-                "FROM (",
-                "SELECT p.\"opId\", greatest((p.\"startTime\"-1-${START}::bigint)/${STEP}::bigint, -1) as \"startBin\", least((p.\"endTime\"+1-${START}::bigint)/${STEP}::bigint, ${BINS}) AS \"endBin\"",
-                "FROM ${PROF_TABLE} p",
-                "WHERE p.\"queryId\" = ${QUERY} and p.\"subQueryId\" = ${SUBQUERY} and p.\"fragmentId\" = ${FRAGMENT}",
-                "${OPNAME_FILTER}",
-                "AND greatest((p.\"startTime\"-${START}::bigint)/${STEP}::bigint, -1) < least((p.\"endTime\"-${START}::bigint)/${STEP}::bigint, ${BINS}) AND p.\"startTime\" < ${END}::bigint AND p.\"endTime\" >= ${START}::bigint",
-                ") times,", "generate_series(0, ${BINS}) AS s(bin)",
-                "WHERE s.bin > times.\"startBin\" and s.bin <= times.\"endBin\";"));
-
-    DbQueryScan scan = new DbQueryScan(histogramWorkerQueryString, schema);
-    final ExchangePairID operatorId = ExchangePairID.newID();
-
-    CollectProducer producer = new CollectProducer(scan, operatorId, MyriaConstants.MASTER_ID);
-
-    SubQueryPlan workerPlan = new SubQueryPlan(producer);
-    Map<Integer, SubQueryPlan> workerPlans = new HashMap<>(actualWorkers.size());
-    for (Integer worker : actualWorkers) {
-      workerPlans.put(worker, workerPlan);
-    }
-
-    /* Aggregate histogram on master */
-    final CollectConsumer consumer =
-        new CollectConsumer(scan.getSchema(), operatorId, ImmutableSet.copyOf(actualWorkers));
-
-    // sum up the number of workers working
-    final MultiGroupByAggregate sumAggregate =
-        new MultiGroupByAggregate(consumer, new int[] { 0, 1 }, new SingleColumnAggregatorFactory(1,
-            AggregationOp.COUNT));
-    // rename columns
-    ImmutableList.Builder<Expression> renameExpressions = ImmutableList.builder();
-    renameExpressions.add(new Expression("opId", new VariableExpression(0)));
-    renameExpressions.add(new Expression("nanoTime", new VariableExpression(1)));
-    renameExpressions.add(new Expression("numWorkers", new VariableExpression(2)));
-    final Apply rename = new Apply(sumAggregate, renameExpressions.build());
-
-    DataOutput output = new DataOutput(rename, writer);
-    final SubQueryPlan masterPlan = new SubQueryPlan(output);
-
-    /* Submit the plan for the download. */
-    String planString =
-        Joiner.on("").join("download profiling histogram (query=", subqueryId.getQueryId(), ", subquery=",
-            subqueryId.getSubqueryId(), ", fragment=", fragmentId, ", range=[", Joiner.on(", ").join(start, end, step),
-            "]", ")");
-    try {
-      return queryManager.submitQuery(planString, planString, planString, masterPlan, workerPlans);
-    } catch (CatalogException e) {
-      throw new DbException(e);
-    }
+//    final Schema schema = Schema.ofFields("opId", Type.INT_TYPE, "nanoTime", Type.LONG_TYPE);
+//    final RelationKey relationKey = MyriaConstants.EVENT_PROFILING_RELATION;
+//
+//    Map<String, Object> queryArgs = new HashMap<>();
+//    queryArgs.put("QUERY", subqueryId.getQueryId());
+//    queryArgs.put("SUBQUERY", subqueryId.getSubqueryId());
+//    queryArgs.put("FRAGMENT", fragmentId);
+//    queryArgs.put("START", start);
+//    queryArgs.put("END", end);
+//    queryArgs.put("STEP", step);
+//    queryArgs.put("BINS", bins);
+//    queryArgs.put("PROF_TABLE", relationKey.toString(getDBMS()));
+//    StrSubstitutor sub;
+//
+//    String filterOpnameQueryString = "";
+//    if (onlyRootOp) {
+//      sub = new StrSubstitutor(queryArgs);
+//      filterOpnameQueryString =
+//          sub.replace("AND p.\"opId\"=(SELECT \"opId\" FROM ${PROF_TABLE} WHERE \"fragmentId\"=${FRAGMENT} AND \"queryId\"=${QUERY} AND \"subQueryId\"=${SUBQUERY} ORDER BY \"startTime\" ASC LIMIT 1)");
+//    }
+//
+//    // Reinitialize the substitutor after including the opname filter.
+//    queryArgs.put("OPNAME_FILTER", filterOpnameQueryString);
+//    sub = new StrSubstitutor(queryArgs);
+//
+//    String histogramWorkerQueryString =
+//        sub.replace(Joiner
+//            .on("\n")
+//            .join(
+//                "SELECT \"opId\", ${START}::bigint+${STEP}::bigint*s.bin as \"nanoTime\"",
+//                "FROM (",
+//                "SELECT p.\"opId\", greatest((p.\"startTime\"-1-${START}::bigint)/${STEP}::bigint, -1) as \"startBin\", least((p.\"endTime\"+1-${START}::bigint)/${STEP}::bigint, ${BINS}) AS \"endBin\"",
+//                "FROM ${PROF_TABLE} p",
+//                "WHERE p.\"queryId\" = ${QUERY} and p.\"subQueryId\" = ${SUBQUERY} and p.\"fragmentId\" = ${FRAGMENT}",
+//                "${OPNAME_FILTER}",
+//                "AND greatest((p.\"startTime\"-${START}::bigint)/${STEP}::bigint, -1) < least((p.\"endTime\"-${START}::bigint)/${STEP}::bigint, ${BINS}) AND p.\"startTime\" < ${END}::bigint AND p.\"endTime\" >= ${START}::bigint",
+//                ") times,", "generate_series(0, ${BINS}) AS s(bin)",
+//                "WHERE s.bin > times.\"startBin\" and s.bin <= times.\"endBin\";"));
+//
+//    DbQueryScan scan = new DbQueryScan(histogramWorkerQueryString, schema);
+//    final ExchangePairID operatorId = ExchangePairID.newID();
+//
+//    CollectProducer producer = new CollectProducer(scan, operatorId, MyriaConstants.MASTER_ID);
+//
+//    SubQueryPlan workerPlan = new SubQueryPlan(producer);
+//    Map<Integer, SubQueryPlan> workerPlans = new HashMap<>(actualWorkers.size());
+//    for (Integer worker : actualWorkers) {
+//      workerPlans.put(worker, workerPlan);
+//    }
+//
+//    /* Aggregate histogram on master */
+//    final CollectConsumer consumer =
+//        new CollectConsumer(scan.getSchema(), operatorId, ImmutableSet.copyOf(actualWorkers));
+//
+//    // sum up the number of workers working
+//    final MultiGroupByAggregate sumAggregate =
+//        new MultiGroupByAggregate(consumer, new int[] { 0, 1 }, new SingleColumnAggregatorFactory(1,
+//            AggregationOp.COUNT));
+//    // rename columns
+//    ImmutableList.Builder<Expression> renameExpressions = ImmutableList.builder();
+//    renameExpressions.add(new Expression("opId", new VariableExpression(0)));
+//    renameExpressions.add(new Expression("nanoTime", new VariableExpression(1)));
+//    renameExpressions.add(new Expression("numWorkers", new VariableExpression(2)));
+//    final Apply rename = new Apply(sumAggregate, renameExpressions.build());
+//
+//    DataOutput output = new DataOutput(rename, writer);
+//    final SubQueryPlan masterPlan = new SubQueryPlan(output);
+//
+//    /* Submit the plan for the download. */
+//    String planString =
+//        Joiner.on("").join("download profiling histogram (query=", subqueryId.getQueryId(), ", subquery=",
+//            subqueryId.getSubqueryId(), ", fragment=", fragmentId, ", range=[", Joiner.on(", ").join(start, end, step),
+//            "]", ")");
+//    try {
+//      return queryManager.submitQuery(planString, planString, planString, masterPlan, workerPlans);
+//    } catch (CatalogException e) {
+//      throw new DbException(e);
+//    }
+    throw new UnsupportedOperationException("implement startHistogramDataStream");
   }
 
   /**
@@ -1680,48 +1692,49 @@ public final class Server {
    */
   public QueryFuture startRangeDataStream(final SubQueryId subqueryId, final long fragmentId, final TupleWriter writer)
       throws DbException {
-    final Schema schema = Schema.ofFields("startTime", Type.LONG_TYPE, "endTime", Type.LONG_TYPE);
-    final RelationKey relationKey = MyriaConstants.EVENT_PROFILING_RELATION;
-
-    Set<Integer> actualWorkers = getWorkersForSubQuery(subqueryId);
-
-    String opnameQueryString =
-        Joiner.on(' ').join("SELECT min(\"startTime\"), max(\"endTime\") FROM", relationKey.toString(getDBMS()),
-            "WHERE \"queryId\"=", subqueryId.getQueryId(), "AND \"subQueryId\"=", subqueryId.getSubqueryId(),
-            "AND \"fragmentId\"=", fragmentId);
-
-    DbQueryScan scan = new DbQueryScan(opnameQueryString, schema);
-    final ExchangePairID operatorId = ExchangePairID.newID();
-
-    CollectProducer producer = new CollectProducer(scan, operatorId, MyriaConstants.MASTER_ID);
-
-    SubQueryPlan workerPlan = new SubQueryPlan(producer);
-    Map<Integer, SubQueryPlan> workerPlans = new HashMap<>(actualWorkers.size());
-    for (Integer worker : actualWorkers) {
-      workerPlans.put(worker, workerPlan);
-    }
-
-    /* Construct the master plan. */
-    final CollectConsumer consumer =
-        new CollectConsumer(scan.getSchema(), operatorId, ImmutableSet.copyOf(actualWorkers));
-
-    // Aggregate range on master
-    final Aggregate sumAggregate =
-        new Aggregate(consumer, new SingleColumnAggregatorFactory(0, AggregationOp.MIN),
-            new SingleColumnAggregatorFactory(1, AggregationOp.MAX));
-
-    DataOutput output = new DataOutput(sumAggregate, writer);
-    final SubQueryPlan masterPlan = new SubQueryPlan(output);
-
-    /* Submit the plan for the download. */
-    String planString =
-        Joiner.on("").join("download time range (query=", subqueryId.getQueryId(), ", subquery=",
-            subqueryId.getSubqueryId(), ", fragment=", fragmentId, ")");
-    try {
-      return queryManager.submitQuery(planString, planString, planString, masterPlan, workerPlans);
-    } catch (CatalogException e) {
-      throw new DbException(e);
-    }
+//    final Schema schema = Schema.ofFields("startTime", Type.LONG_TYPE, "endTime", Type.LONG_TYPE);
+//    final RelationKey relationKey = MyriaConstants.EVENT_PROFILING_RELATION;
+//
+//    Set<Integer> actualWorkers = getWorkersForSubQuery(subqueryId);
+//
+//    String opnameQueryString =
+//        Joiner.on(' ').join("SELECT min(\"startTime\"), max(\"endTime\") FROM", relationKey.toString(getDBMS()),
+//            "WHERE \"queryId\"=", subqueryId.getQueryId(), "AND \"subQueryId\"=", subqueryId.getSubqueryId(),
+//            "AND \"fragmentId\"=", fragmentId);
+//
+//    DbQueryScan scan = new DbQueryScan(opnameQueryString, schema);
+//    final ExchangePairID operatorId = ExchangePairID.newID();
+//
+//    CollectProducer producer = new CollectProducer(scan, operatorId, MyriaConstants.MASTER_ID);
+//
+//    SubQueryPlan workerPlan = new SubQueryPlan(producer);
+//    Map<Integer, SubQueryPlan> workerPlans = new HashMap<>(actualWorkers.size());
+//    for (Integer worker : actualWorkers) {
+//      workerPlans.put(worker, workerPlan);
+//    }
+//
+//    /* Construct the master plan. */
+//    final CollectConsumer consumer =
+//        new CollectConsumer(scan.getSchema(), operatorId, ImmutableSet.copyOf(actualWorkers));
+//
+//    // Aggregate range on master
+//    final Aggregate sumAggregate =
+//        new Aggregate(consumer, new SingleColumnAggregatorFactory(0, AggregationOp.MIN),
+//            new SingleColumnAggregatorFactory(1, AggregationOp.MAX));
+//
+//    DataOutput output = new DataOutput(sumAggregate, writer);
+//    final SubQueryPlan masterPlan = new SubQueryPlan(output);
+//
+//    /* Submit the plan for the download. */
+//    String planString =
+//        Joiner.on("").join("download time range (query=", subqueryId.getQueryId(), ", subquery=",
+//            subqueryId.getSubqueryId(), ", fragment=", fragmentId, ")");
+//    try {
+//      return queryManager.submitQuery(planString, planString, planString, masterPlan, workerPlans);
+//    } catch (CatalogException e) {
+//      throw new DbException(e);
+//    }
+    throw new UnsupportedOperationException("implement startRangeDataStream");
   }
 
   /**
@@ -1734,58 +1747,59 @@ public final class Server {
    */
   public QueryFuture startContributionsStream(final SubQueryId subqueryId, final long fragmentId,
       final TupleWriter writer) throws DbException {
-    final Schema schema = Schema.ofFields("opId", Type.INT_TYPE, "nanoTime", Type.LONG_TYPE);
-    final RelationKey relationKey = MyriaConstants.EVENT_PROFILING_RELATION;
-
-    Set<Integer> actualWorkers = getWorkersForSubQuery(subqueryId);
-
-    String fragIdCondition = "";
-    if (fragmentId >= 0) {
-      fragIdCondition = "AND \"fragmentId\"=" + fragmentId;
-    }
-
-    String opContributionsQueryString =
-        Joiner.on(' ').join("SELECT \"opId\", sum(\"endTime\" - \"startTime\") FROM ", relationKey.toString(getDBMS()),
-            "WHERE \"queryId\"=", subqueryId.getQueryId(), "AND \"subQueryId\"=", subqueryId.getSubqueryId(),
-            fragIdCondition, "GROUP BY \"opId\"");
-
-    DbQueryScan scan = new DbQueryScan(opContributionsQueryString, schema);
-    final ExchangePairID operatorId = ExchangePairID.newID();
-
-    CollectProducer producer = new CollectProducer(scan, operatorId, MyriaConstants.MASTER_ID);
-
-    SubQueryPlan workerPlan = new SubQueryPlan(producer);
-    Map<Integer, SubQueryPlan> workerPlans = new HashMap<>(actualWorkers.size());
-    for (Integer worker : actualWorkers) {
-      workerPlans.put(worker, workerPlan);
-    }
-
-    /* Aggregate on master */
-    final CollectConsumer consumer =
-        new CollectConsumer(scan.getSchema(), operatorId, ImmutableSet.copyOf(actualWorkers));
-
-    // sum up contributions
-    final SingleGroupByAggregate sumAggregate =
-        new SingleGroupByAggregate(consumer, 0, new SingleColumnAggregatorFactory(1, AggregationOp.AVG));
-
-    // rename columns
-    ImmutableList.Builder<Expression> renameExpressions = ImmutableList.builder();
-    renameExpressions.add(new Expression("opId", new VariableExpression(0)));
-    renameExpressions.add(new Expression("nanoTime", new VariableExpression(1)));
-    final Apply rename = new Apply(sumAggregate, renameExpressions.build());
-
-    DataOutput output = new DataOutput(rename, writer);
-    final SubQueryPlan masterPlan = new SubQueryPlan(output);
-
-    /* Submit the plan for the download. */
-    String planString =
-        Joiner.on("").join("download operator contributions (query=", subqueryId.getQueryId(), ", subquery=",
-            subqueryId.getSubqueryId(), ", fragment=", fragmentId, ")");
-    try {
-      return queryManager.submitQuery(planString, planString, planString, masterPlan, workerPlans);
-    } catch (CatalogException e) {
-      throw new DbException(e);
-    }
+//    final Schema schema = Schema.ofFields("opId", Type.INT_TYPE, "nanoTime", Type.LONG_TYPE);
+//    final RelationKey relationKey = MyriaConstants.EVENT_PROFILING_RELATION;
+//
+//    Set<Integer> actualWorkers = getWorkersForSubQuery(subqueryId);
+//
+//    String fragIdCondition = "";
+//    if (fragmentId >= 0) {
+//      fragIdCondition = "AND \"fragmentId\"=" + fragmentId;
+//    }
+//
+//    String opContributionsQueryString =
+//        Joiner.on(' ').join("SELECT \"opId\", sum(\"endTime\" - \"startTime\") FROM ", relationKey.toString(getDBMS()),
+//            "WHERE \"queryId\"=", subqueryId.getQueryId(), "AND \"subQueryId\"=", subqueryId.getSubqueryId(),
+//            fragIdCondition, "GROUP BY \"opId\"");
+//
+//    DbQueryScan scan = new DbQueryScan(opContributionsQueryString, schema);
+//    final ExchangePairID operatorId = ExchangePairID.newID();
+//
+//    CollectProducer producer = new CollectProducer(scan, operatorId, MyriaConstants.MASTER_ID);
+//
+//    SubQueryPlan workerPlan = new SubQueryPlan(producer);
+//    Map<Integer, SubQueryPlan> workerPlans = new HashMap<>(actualWorkers.size());
+//    for (Integer worker : actualWorkers) {
+//      workerPlans.put(worker, workerPlan);
+//    }
+//
+//    /* Aggregate on master */
+//    final CollectConsumer consumer =
+//        new CollectConsumer(scan.getSchema(), operatorId, ImmutableSet.copyOf(actualWorkers));
+//
+//    // sum up contributions
+//    final SingleGroupByAggregate sumAggregate =
+//        new SingleGroupByAggregate(consumer, 0, new SingleColumnAggregatorFactory(1, AggregationOp.AVG));
+//
+//    // rename columns
+//    ImmutableList.Builder<Expression> renameExpressions = ImmutableList.builder();
+//    renameExpressions.add(new Expression("opId", new VariableExpression(0)));
+//    renameExpressions.add(new Expression("nanoTime", new VariableExpression(1)));
+//    final Apply rename = new Apply(sumAggregate, renameExpressions.build());
+//
+//    DataOutput output = new DataOutput(rename, writer);
+//    final SubQueryPlan masterPlan = new SubQueryPlan(output);
+//
+//    /* Submit the plan for the download. */
+//    String planString =
+//        Joiner.on("").join("download operator contributions (query=", subqueryId.getQueryId(), ", subquery=",
+//            subqueryId.getSubqueryId(), ", fragment=", fragmentId, ")");
+//    try {
+//      return queryManager.submitQuery(planString, planString, planString, masterPlan, workerPlans);
+//    } catch (CatalogException e) {
+//      throw new DbException(e);
+//    }
+    throw new UnsupportedOperationException("implement startContributionsStream");
   }
 
   /**
