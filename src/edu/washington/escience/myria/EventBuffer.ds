@@ -14,7 +14,7 @@ EventBuffer:
         numTuples : Long
     }
 
-    state events : List<Event>
+    state events : Bag<Event>
 
     invariant all [x.startTime <= x.endTime | x <- events];
 
