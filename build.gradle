@@ -27,7 +27,6 @@ buildscript {
 
   dependencies {
     classpath 'org.kt3k.gradle.plugin:coveralls-gradle-plugin:2.0.0'
-    compile group: 'net.sf.trove4j', name: 'trove4j', version: '3.0.3'
   }
 }
 /* Tell gradle where the source code is located. */
@@ -98,6 +97,9 @@ ext.swaggerVersion = "2.11"
 ext.swaggerMinorVersion = "1.3.11"
 
 dependencies {
+  // Needed for Cozy --unboxed
+  compile group: 'net.sf.trove4j', name: 'trove4j', version: '3.0.3'
+
   compile ("org.apache.hadoop:hadoop-core:1.2.1") {
     /* Hadoop depends on Jersey 1 but we don't need it. Exclude it to prevent
      * Classloader picking the wrong version of Jersey classes. */
