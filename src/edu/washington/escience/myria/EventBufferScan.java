@@ -37,27 +37,27 @@ public class EventBufferScan extends LeafOperator {
 
   @Override
   protected TupleBatch fetchNextReady() throws Exception {
-    if (events == null) {
-      // TODO: locking? This structure is not threadsafe...
-      events = ProfilingLogger.events.getAnalyticsInTimespan(queryId, subqueryId, fragmentId, start, end);
 
-    }
-
-    int count = 0;
+    java.util.concurrent.atomic.AtomicInteger count = new java.util.concurrent.atomic.AtomicInteger();
 
     final List<ColumnBuilder<?>> columnBuilders = ColumnFactory.allocateColumns(OUTPUT_SCHEMA);
+    ProfilingLogger.events.getAnalyticsInTimespan(
+            queryId,
+            subqueryId,
+            fragmentId,
+            start,
+            end,
+            (EventBuffer.Event event) -> {
+              columnBuilders.get(0).appendInt(event.getOpId());
+              columnBuilders.get(1).appendLong(event.getStartTime());
+              columnBuilders.get(2).appendLong(event.getEndTime());
+              columnBuilders.get(3).appendLong(event.getNumTuples());
+              count.incrementAndGet();
+            }
+    );
 
-    Iterator<EventBuffer.Event> it = events.iterator();
-    while (it.hasNext() && count < BATCH_SIZE) {
-      EventBuffer.Event e = it.next();
-      columnBuilders.get(0).appendInt(e.getOpId());
-      columnBuilders.get(1).appendLong(e.getStartTime());
-      columnBuilders.get(2).appendLong(e.getEndTime());
-      columnBuilders.get(3).appendLong(e.getNumTuples());
-      ++count;
-    }
 
-    if (count == 0) {
+    if (count.get() == 0) {
       return null;
     }
 
@@ -66,7 +66,7 @@ public class EventBufferScan extends LeafOperator {
       columns.add(cb.build());
     }
 
-    return new TupleBatch(OUTPUT_SCHEMA, columns, count);
+    return new TupleBatch(OUTPUT_SCHEMA, columns, count.get());
   }
 
   @Override
